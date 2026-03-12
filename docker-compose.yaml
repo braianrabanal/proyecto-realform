@@ -1,0 +1,52 @@
+services:
+  app_capture:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-capture-api
+    # Ejecutar como root para evitar problemas de permisos
+    user: "0:0"
+    # Usar la red del host para exponer directamente el puerto 8001
+    network_mode: "host"
+    # Privilegios para acceso a hardware
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    environment:
+      - PYTHONPATH=/app
+      - API_HOST=0.0.0.0
+      - API_PORT=8001
+      - API_LOG_LEVEL=info
+      - DATA_DIR=/app/data
+    volumes:
+      - .:/app
+      - ./images:/app/data/images
+    # Acceso a bus USB (para cámaras USB)
+    devices:
+      - "/dev/bus/usb:/dev/bus/usb"
+      # Mapea también el dispositivo de vídeo principal si es necesario
+      - "/dev/video0:/dev/video0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: uvicorn app.app_capture:app --host 0.0.0.0 --port 8001
+
+  app_predict:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - .:/app
+      - ./images_annotated:/app/data/images_annotated
+    environment:
+      - PYTHONPATH=/app
+    command: uvicorn app.app_predict:app --host 0.0.0.0 --port 8002
+    
