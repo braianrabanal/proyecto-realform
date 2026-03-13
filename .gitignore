@@ -1,0 +1,14 @@
+# Modelos pesados
+best.pt
+
+# Carpetas de imágenes
+images/
+images_annotated/
+
+# Cachés de Python
+__pycache__/
+*.pyc
+
+# Entornos virtuales
+venv/
+.env/

@@ -21,7 +21,7 @@ Flujo de trabajo:
 
 st.set_page_config(page_title=" PROYECTO REALFORM - Cámara con YOLO", layout="wide")
 st.title(" REALFORM - 🥤 Deteccion de Tapones o Vasos 🍾 ")
-st.subheader("☢️ Realizado por Braian, supervisado por Ismael ☢️")
+#st.subheader("☢️ Realizado por Braian, supervisado por Ismael ☢️")
 st.subheader("==========================================================================================================")
 
 
@@ -115,7 +115,7 @@ with col_right:
             payload = {"filename": st.session_state["last_filename"]}
             try:
                 resp = requests.post(
-                    predict_from_saved_annotated_url, json=payload, timeout=30
+                    predict_from_saved_annotated_url, params=payload, timeout=30
                 )
             except Exception as e:
                 st.error(f"No se pudo contactar con el servicio de predicción: {e}")

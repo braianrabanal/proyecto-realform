@@ -54,7 +54,11 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-def _run_inference_on_image(img, save_annotated_path: Path | None = None) -> dict:
+def _run_inference_on_image(
+    img,
+    save_annotated_path: Path | None = None,
+    confidence_threshold: float = 0.25,
+) -> dict:
     """
     Ejecuta YOLO sobre una imagen ya cargada (matriz de OpenCV)
     y devuelve un dict con las detecciones.
@@ -68,6 +72,10 @@ def _run_inference_on_image(img, save_annotated_path: Path | None = None) -> dic
     for box in results.boxes:
         cls_id = int(box.cls.item())
         score = float(box.conf.item())
+
+        # Filtrar por umbral de confianza deseado
+        if score < confidence_threshold:
+            continue
         x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
 
         # Obtener nombre de la clase desde el modelo / resultados
@@ -134,7 +142,9 @@ def _run_inference_on_image(img, save_annotated_path: Path | None = None) -> dic
 
 
 @app.post("/predict_from_saved")
-async def predict_from_saved(filename: str) -> JSONResponse:
+async def predict_from_saved(
+    filename: str, confidence_threshold: float = 0.25
+) -> JSONResponse:
     """
     Lee una imagen ya guardada en disco (por ejemplo capturada por /capture)
     y ejecuta la inferencia YOLO sobre ella.
@@ -154,12 +164,17 @@ async def predict_from_saved(filename: str) -> JSONResponse:
             content={"error": "No se pudo leer la imagen desde disco"},
         )
 
-    data = _run_inference_on_image(img)
+    data = _run_inference_on_image(
+        img,
+        confidence_threshold=confidence_threshold,
+    )
     return JSONResponse(data)
 
 
 @app.post("/predict_from_saved_annotated")
-async def predict_from_saved_annotated(filename: str) -> JSONResponse:
+async def predict_from_saved_annotated(
+    filename: str, confidence_threshold: float = 0.25
+) -> JSONResponse:
     """
     Igual que /predict_from_saved, pero además genera y guarda una imagen
     anotada con los bounding boxes en ANNOTATED_DIR.
@@ -185,7 +200,11 @@ async def predict_from_saved_annotated(filename: str) -> JSONResponse:
     annotated_filename = f"annotated_{filename}"
     annotated_path = ANNOTATED_DIR / annotated_filename
 
-    data = _run_inference_on_image(img, save_annotated_path=annotated_path)
+    data = _run_inference_on_image(
+        img,
+        save_annotated_path=annotated_path,
+        confidence_threshold=confidence_threshold,
+    )
     data.update(
         {
             "annotated_filename": annotated_filename,
@@ -198,7 +217,7 @@ async def predict_from_saved_annotated(filename: str) -> JSONResponse:
 
 
 @app.get("/predict_all_saved")
-async def predict_all_saved() -> JSONResponse:
+async def predict_all_saved(confidence_threshold: float = 0.25) -> JSONResponse:
     """
     Recorre todas las imágenes guardadas en IMAGES_DIR y ejecuta YOLO sobre cada una.
     Para cada imagen, también genera y guarda una versión anotada con bounding boxes
@@ -241,7 +260,11 @@ async def predict_all_saved() -> JSONResponse:
         annotated_filename = f"annotated_{img_path.name}"
         annotated_path = ANNOTATED_DIR / annotated_filename
 
-        data = _run_inference_on_image(img, save_annotated_path=annotated_path)
+        data = _run_inference_on_image(
+            img,
+            save_annotated_path=annotated_path,
+            confidence_threshold=confidence_threshold,
+        )
         data.update(
             {
                 "annotated_filename": annotated_filename,

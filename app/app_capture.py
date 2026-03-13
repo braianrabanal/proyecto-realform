@@ -32,7 +32,7 @@ async def capture_frame() -> JSONResponse:
     Captura un frame de la cámara USB y lo guarda como imagen en disco.
     """
     # Abrir la cámara principal (dispositivo 0, mapeado como /dev/video0)
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     if not cap.isOpened():
         return JSONResponse(
             status_code=500,
