@@ -38,6 +38,7 @@ predict_base_url = st.sidebar.text_input(
     value="http://localhost:8002",
     help="Normalmente http://localhost:8002",
 )
+model_info_url = f"{predict_base_url.rstrip('/')}/model_info"
 
 capture_url = f"{capture_base_url.rstrip('/')}/capture"
 predict_from_saved_url = f"{predict_base_url.rstrip('/')}/predict_from_saved"
@@ -45,6 +46,24 @@ predict_from_saved_annotated_url = (
     f"{predict_base_url.rstrip('/')}/predict_from_saved_annotated"
 )
 predict_all_saved_url = f"{predict_base_url.rstrip('/')}/predict_all_saved"
+
+st.sidebar.markdown("---")
+if st.sidebar.button("Consultar modelo de inferencia"):
+    try:
+        model_resp = requests.get(model_info_url, timeout=10)
+    except Exception as e:
+        st.sidebar.error(f"No se pudo consultar /model_info: {e}")
+    else:
+        if model_resp.status_code != 200:
+            st.sidebar.error(
+                f"Error al consultar modelo (status {model_resp.status_code}): {model_resp.text}"
+            )
+        else:
+            model_data = model_resp.json()
+            st.sidebar.success(
+                f"Modelo activo: {model_data.get('model_filename', 'desconocido')}"
+            )
+            st.sidebar.json(model_data)
 
 # Selector de confianza mínima para YOLO
 st.sidebar.markdown("---")

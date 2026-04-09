@@ -101,14 +101,22 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/model_info")
+async def model_info() -> dict:
+    """
+    Devuelve información del archivo de modelo utilizado para inferencia.
+    """
+    return {
+        "model_filename": MODEL_PATH.name,
+        "model_path": str(MODEL_PATH),
+        "model_exists": MODEL_PATH.exists(),
+    }
+
+
 def _run_inference_on_image(
     img,
     save_annotated_path: Path | None = None,
-<<<<<<< HEAD
-    confidence_threshold: float = 0.25,
-=======
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
->>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> dict:
     """
     Ejecuta YOLO sobre una imagen ya cargada (matriz de OpenCV)
@@ -250,11 +258,7 @@ def _log_inference_to_clearml(
 
 @app.post("/predict_from_saved")
 async def predict_from_saved(
-<<<<<<< HEAD
-    filename: str, confidence_threshold: float = 0.25
-=======
     filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
->>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> JSONResponse:
     """
     Lee una imagen ya guardada en disco (por ejemplo capturada por /capture)
@@ -279,25 +283,18 @@ async def predict_from_saved(
         img,
         confidence_threshold=confidence_threshold,
     )
-<<<<<<< HEAD
-=======
     _log_inference_to_clearml(
         endpoint="/predict_from_saved",
         filename=filename,
         confidence_threshold=confidence_threshold,
         result_data=data,
     )
->>>>>>> e4c727e (Dockerizado completo del proyecto)
     return JSONResponse(data)
 
 
 @app.post("/predict_from_saved_annotated")
 async def predict_from_saved_annotated(
-<<<<<<< HEAD
-    filename: str, confidence_threshold: float = 0.25
-=======
     filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
->>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> JSONResponse:
     """
     Igual que /predict_from_saved, pero además genera y guarda una imagen
@@ -348,13 +345,9 @@ async def predict_from_saved_annotated(
 
 
 @app.get("/predict_all_saved")
-<<<<<<< HEAD
-async def predict_all_saved(confidence_threshold: float = 0.25) -> JSONResponse:
-=======
 async def predict_all_saved(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
 ) -> JSONResponse:
->>>>>>> e4c727e (Dockerizado completo del proyecto)
     """
     Recorre todas las imágenes guardadas en IMAGES_DIR y ejecuta YOLO sobre cada una.
     Para cada imagen, también genera y guarda una versión anotada con bounding boxes
