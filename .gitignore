@@ -12,4 +12,7 @@ __pycache__/
 # Entornos virtuales
 venv/
 .env/
+<<<<<<< HEAD
 
+=======
+>>>>>>> e4c727e (Dockerizado completo del proyecto)

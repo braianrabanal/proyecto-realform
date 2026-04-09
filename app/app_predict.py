@@ -5,6 +5,13 @@ from pathlib import Path
 from typing import Optional, List
 import cv2
 import numpy as np
+import os
+from datetime import datetime
+
+try:
+    from clearml import Task
+except Exception:
+    Task = None
 
 """
 Aplicación FastAPI para:
@@ -21,6 +28,9 @@ app = FastAPI(title="Predict Service", version="1.0.0")
 MODEL_PATH = Path("best.pt")  # ajusta si usas otro nombre/ruta
 _yolo_model: Optional[YOLO] = None
 
+# Umbral de confianza por defecto (común a todos los endpoints)
+DEFAULT_CONFIDENCE_THRESHOLD: float = 0.25
+
 # Directorio donde se encuentran las imágenes capturadas.
 # En docker-compose se monta todo el proyecto en /app,
 # por lo que el host ./images se ve aquí como /app/images → Path("images")
@@ -31,6 +41,43 @@ IMAGES_DIR = Path("images")
 # Por tanto, aquí usamos la ruta absoluta dentro del contenedor.
 ANNOTATED_DIR = Path("/app/data/images_annotated")
 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Configuración opcional de ClearML ---
+ENABLE_CLEARML = os.getenv("ENABLE_CLEARML", "false").lower() == "true"
+CLEARML_PROJECT = os.getenv("CLEARML_PROJECT", "REALFORM")
+CLEARML_TASK_NAME = os.getenv("CLEARML_TASK_NAME", "predict-service")
+_clearml_task = None
+
+
+def _get_clearml_task():
+    """
+    Inicializa una tarea de ClearML solo cuando está habilitado por entorno.
+    Si ClearML no está disponible o falla la conexión, se desactiva sin romper la API.
+    """
+    global _clearml_task
+    if not ENABLE_CLEARML or Task is None:
+        return None
+    if _clearml_task is not None:
+        return _clearml_task
+    try:
+        _clearml_task = Task.init(
+            project_name=CLEARML_PROJECT,
+            task_name=CLEARML_TASK_NAME,
+            task_type=Task.TaskTypes.inference,
+            auto_connect_frameworks=False,
+        )
+        _clearml_task.connect(
+            {
+                "default_confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
+                "model_path": str(MODEL_PATH),
+                "images_dir": str(IMAGES_DIR),
+                "annotated_dir": str(ANNOTATED_DIR),
+            },
+            name="service_config",
+        )
+    except Exception:
+        _clearml_task = None
+    return _clearml_task
 
 
 def get_model() -> YOLO:
@@ -57,7 +104,11 @@ async def health() -> dict:
 def _run_inference_on_image(
     img,
     save_annotated_path: Path | None = None,
+<<<<<<< HEAD
     confidence_threshold: float = 0.25,
+=======
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+>>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> dict:
     """
     Ejecuta YOLO sobre una imagen ya cargada (matriz de OpenCV)
@@ -141,9 +192,69 @@ def _run_inference_on_image(
     return result
 
 
+def _log_inference_to_clearml(
+    endpoint: str,
+    filename: str,
+    confidence_threshold: float,
+    result_data: dict,
+    annotated_path: Path | None = None,
+) -> None:
+    """
+    Registra metadata de inferencia en ClearML (si está habilitado).
+    """
+    task = _get_clearml_task()
+    if task is None:
+        return
+    try:
+        now_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        total_objects = result_data.get("Numero de objetos", 0)
+        class_counts = result_data.get("Objetos por tipo", {})
+
+        task.get_logger().report_scalar(
+            title="inference",
+            series="objects_detected",
+            value=total_objects,
+            iteration=0,
+        )
+        for class_name, count in class_counts.items():
+            task.get_logger().report_scalar(
+                title="classes_detected",
+                series=str(class_name),
+                value=int(count),
+                iteration=0,
+            )
+
+        task.get_logger().report_text(
+            f"[{now_str}] endpoint={endpoint} filename={filename} "
+            f"confidence_threshold={confidence_threshold} total_objects={total_objects}"
+        )
+        task.upload_artifact(
+            name=f"inference_result_{filename}_{now_str}",
+            artifact_object={
+                "endpoint": endpoint,
+                "filename": filename,
+                "confidence_threshold": confidence_threshold,
+                "result": result_data,
+            },
+        )
+
+        if annotated_path is not None and annotated_path.exists():
+            task.upload_artifact(
+                name=f"annotated_image_{filename}_{now_str}",
+                artifact_object=str(annotated_path),
+            )
+    except Exception:
+        # Nunca bloquear el flujo de inferencia por errores de tracking.
+        return
+
+
 @app.post("/predict_from_saved")
 async def predict_from_saved(
+<<<<<<< HEAD
     filename: str, confidence_threshold: float = 0.25
+=======
+    filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+>>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> JSONResponse:
     """
     Lee una imagen ya guardada en disco (por ejemplo capturada por /capture)
@@ -168,12 +279,25 @@ async def predict_from_saved(
         img,
         confidence_threshold=confidence_threshold,
     )
+<<<<<<< HEAD
+=======
+    _log_inference_to_clearml(
+        endpoint="/predict_from_saved",
+        filename=filename,
+        confidence_threshold=confidence_threshold,
+        result_data=data,
+    )
+>>>>>>> e4c727e (Dockerizado completo del proyecto)
     return JSONResponse(data)
 
 
 @app.post("/predict_from_saved_annotated")
 async def predict_from_saved_annotated(
+<<<<<<< HEAD
     filename: str, confidence_threshold: float = 0.25
+=======
+    filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+>>>>>>> e4c727e (Dockerizado completo del proyecto)
 ) -> JSONResponse:
     """
     Igual que /predict_from_saved, pero además genera y guarda una imagen
@@ -211,13 +335,26 @@ async def predict_from_saved_annotated(
             "annotated_relative_path": f"images_annotated/{annotated_filename}",
         }
     )
+    _log_inference_to_clearml(
+        endpoint="/predict_from_saved_annotated",
+        filename=filename,
+        confidence_threshold=confidence_threshold,
+        result_data=data,
+        annotated_path=annotated_path,
+    )
 
     return JSONResponse(data)
 
 
 
 @app.get("/predict_all_saved")
+<<<<<<< HEAD
 async def predict_all_saved(confidence_threshold: float = 0.25) -> JSONResponse:
+=======
+async def predict_all_saved(
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+) -> JSONResponse:
+>>>>>>> e4c727e (Dockerizado completo del proyecto)
     """
     Recorre todas las imágenes guardadas en IMAGES_DIR y ejecuta YOLO sobre cada una.
     Para cada imagen, también genera y guarda una versión anotada con bounding boxes
@@ -273,6 +410,13 @@ async def predict_all_saved(confidence_threshold: float = 0.25) -> JSONResponse:
         )
 
         results_by_file[img_path.name] = data
+        _log_inference_to_clearml(
+            endpoint="/predict_all_saved",
+            filename=img_path.name,
+            confidence_threshold=confidence_threshold,
+            result_data=data,
+            annotated_path=annotated_path,
+        )
 
     return JSONResponse(results_by_file)
 

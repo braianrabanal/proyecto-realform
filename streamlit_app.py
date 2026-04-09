@@ -46,6 +46,17 @@ predict_from_saved_annotated_url = (
 )
 predict_all_saved_url = f"{predict_base_url.rstrip('/')}/predict_all_saved"
 
+# Selector de confianza mínima para YOLO
+st.sidebar.markdown("---")
+confidence_threshold = st.sidebar.slider(
+    "Confianza mínima YOLO",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.25,
+    step=0.01,
+    help="Solo se mostrarán detecciones con una confianza igual o superior a este valor.",
+)
+
 # Carpeta de imágenes en el host (montada por docker-compose)
 HOST_IMAGES_DIR = Path("images")
 HOST_ANNOTATED_DIR = Path("images_annotated")
@@ -112,7 +123,10 @@ with col_right:
         if not st.session_state.get("last_filename"):
             st.warning("Primero captura una imagen para tener un filename.")
         else:
-            payload = {"filename": st.session_state["last_filename"]}
+            payload = {
+                "filename": st.session_state["last_filename"],
+                "confidence_threshold": confidence_threshold,
+            }
             try:
                 resp = requests.post(
                     predict_from_saved_annotated_url, params=payload, timeout=30
@@ -157,7 +171,11 @@ with col_right:
 
     if st.button("📂 Predecir todas las imágenes de la carpeta images\n\n 🗃️ Se guardan en images_annotated"):
         try:
-            resp = requests.get(predict_all_saved_url, timeout=60)
+            resp = requests.get(
+                predict_all_saved_url,
+                params={"confidence_threshold": confidence_threshold},
+                timeout=60,
+            )
         except Exception as e:
             st.error(f"No se pudo contactar con el servicio de predicción: {e}")
         else:

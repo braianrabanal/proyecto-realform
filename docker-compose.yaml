@@ -48,5 +48,31 @@ services:
       - ./images_annotated:/app/data/images_annotated
     environment:
       - PYTHONPATH=/app
+      - ENABLE_CLEARML=${ENABLE_CLEARML:-false}
+      - CLEARML_PROJECT=${CLEARML_PROJECT:-REALFORM}
+      - CLEARML_TASK_NAME=${CLEARML_TASK_NAME:-predict-service}
+      - CLEARML_API_HOST=${CLEARML_API_HOST:-}
+      - CLEARML_WEB_HOST=${CLEARML_WEB_HOST:-}
+      - CLEARML_FILES_HOST=${CLEARML_FILES_HOST:-}
+      - CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY:-}
+      - CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY:-}
     command: uvicorn app.app_predict:app --host 0.0.0.0 --port 8002
+
+  streamlit_front:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: realform-streamlit-front
+    network_mode: "host"
+    depends_on:
+      - app_capture
+      - app_predict
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - .:/app
+      - ./images:/app/images
+      - ./images_annotated:/app/images_annotated
+    restart: unless-stopped
+    command: streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501
     
