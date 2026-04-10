@@ -123,7 +123,11 @@ def _run_inference_on_image(
     y devuelve un dict con las detecciones.
     """
     model = get_model()
-    results = model(img)[0]  # primer resultado
+    # Alinear el umbral del endpoint con el umbral interno de YOLO.
+    # Sin esto, YOLO aplica su conf por defecto y puede descartar cajas
+    # antes de nuestro filtro manual.
+    yolo_conf = max(0.0, min(1.0, float(confidence_threshold)))
+    results = model(img, conf=yolo_conf)[0]  # primer resultado
 
     detections: list[dict] = []
     class_counts = {}
@@ -347,6 +351,7 @@ async def predict_from_saved_annotated(
 @app.get("/predict_all_saved")
 async def predict_all_saved(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    limit: int | None = None,
 ) -> JSONResponse:
     """
     Recorre todas las imágenes guardadas en IMAGES_DIR y ejecuta YOLO sobre cada una.
@@ -376,6 +381,21 @@ async def predict_all_saved(
             status_code=404,
             content={"error": "No se encontraron imágenes en el directorio"},
         )
+
+    if limit is not None:
+        try:
+            limit_i = int(limit)
+        except Exception:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "El parámetro limit debe ser un entero"},
+            )
+        if limit_i <= 0:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "El parámetro limit debe ser > 0"},
+            )
+        image_paths = image_paths[:limit_i]
 
     results_by_file = {}
 

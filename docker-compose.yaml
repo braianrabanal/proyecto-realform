@@ -89,4 +89,5 @@ services:
       retries: 3
       start_period: 40s
     command: streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501
-    
+
+

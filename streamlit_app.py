@@ -188,12 +188,14 @@ with col_right:
     st.markdown("---")
     st.subheader("4. Predicción YOLO sobre TODAS las imágenes guardadas")
 
-    if st.button("📂 Predecir todas las imágenes de la carpeta images\n\n 🗃️ Se guardan en images_annotated"):
+    if st.button(
+        "📂 Predecir todas las imágenes de la carpeta images\n\n 🗃️ Se guardan en images_annotated"
+    ):
         try:
             resp = requests.get(
                 predict_all_saved_url,
-                params={"confidence_threshold": confidence_threshold},
-                timeout=60,
+                params={"confidence_threshold": confidence_threshold, "limit": 30},
+                timeout=300,
             )
         except Exception as e:
             st.error(f"No se pudo contactar con el servicio de predicción: {e}")
