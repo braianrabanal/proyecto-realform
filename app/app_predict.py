@@ -25,8 +25,8 @@ app = FastAPI(title="Predict Service", version="1.0.0")
 
 # --- Configuración y carga perezosa del modelo YOLO ---
 
-MODEL_PATH = Path("best.pt")  # ajusta si usas otro nombre/ruta
-_yolo_model: Optional[YOLO] = None
+DEFAULT_MODEL_NAME = "best.pt"
+_yolo_models: dict[str, YOLO] = {}
 
 # Umbral de confianza por defecto (común a todos los endpoints)
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.25
@@ -69,7 +69,7 @@ def _get_clearml_task():
         _clearml_task.connect(
             {
                 "default_confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
-                "model_path": str(MODEL_PATH),
+                "default_model_path": DEFAULT_MODEL_NAME,
                 "images_dir": str(IMAGES_DIR),
                 "annotated_dir": str(ANNOTATED_DIR),
             },
@@ -80,17 +80,28 @@ def _get_clearml_task():
     return _clearml_task
 
 
-def get_model() -> YOLO:
+def _resolve_model_path(model_name: str = DEFAULT_MODEL_NAME) -> Path:
+    """
+    Resuelve el archivo de modelo dentro de /app evitando rutas arbitrarias.
+    """
+    safe_name = Path(model_name).name
+    if not safe_name.endswith(".pt"):
+        raise RuntimeError("El modelo debe ser un archivo .pt")
+    return Path(safe_name)
+
+
+def get_model(model_name: str = DEFAULT_MODEL_NAME) -> YOLO:
     """
     Carga el modelo YOLO una sola vez (lazy load) y lo reutiliza
     en las siguientes peticiones.
     """
-    global _yolo_model
-    if _yolo_model is None:
-        if not MODEL_PATH.exists():
-            raise RuntimeError(f"Modelo no encontrado en {MODEL_PATH}")
-        _yolo_model = YOLO(str(MODEL_PATH))
-    return _yolo_model
+    model_path = _resolve_model_path(model_name)
+    model_key = str(model_path)
+    if model_key not in _yolo_models:
+        if not model_path.exists():
+            raise RuntimeError(f"Modelo no encontrado en {model_path}")
+        _yolo_models[model_key] = YOLO(str(model_path))
+    return _yolo_models[model_key]
 
 
 @app.get("/health")
@@ -102,14 +113,15 @@ async def health() -> dict:
 
 
 @app.get("/model_info")
-async def model_info() -> dict:
+async def model_info(model_name: str = DEFAULT_MODEL_NAME) -> dict:
     """
     Devuelve información del archivo de modelo utilizado para inferencia.
     """
+    model_path = _resolve_model_path(model_name)
     return {
-        "model_filename": MODEL_PATH.name,
-        "model_path": str(MODEL_PATH),
-        "model_exists": MODEL_PATH.exists(),
+        "model_filename": model_path.name,
+        "model_path": str(model_path),
+        "model_exists": model_path.exists(),
     }
 
 
@@ -117,12 +129,13 @@ def _run_inference_on_image(
     img,
     save_annotated_path: Path | None = None,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    model_name: str = DEFAULT_MODEL_NAME,
 ) -> dict:
     """
     Ejecuta YOLO sobre una imagen ya cargada (matriz de OpenCV)
     y devuelve un dict con las detecciones.
     """
-    model = get_model()
+    model = get_model(model_name=model_name)
     # Alinear el umbral del endpoint con el umbral interno de YOLO.
     # Sin esto, YOLO aplica su conf por defecto y puede descartar cajas
     # antes de nuestro filtro manual.
@@ -262,7 +275,9 @@ def _log_inference_to_clearml(
 
 @app.post("/predict_from_saved")
 async def predict_from_saved(
-    filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    filename: str,
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    model_name: str = DEFAULT_MODEL_NAME,
 ) -> JSONResponse:
     """
     Lee una imagen ya guardada en disco (por ejemplo capturada por /capture)
@@ -286,7 +301,9 @@ async def predict_from_saved(
     data = _run_inference_on_image(
         img,
         confidence_threshold=confidence_threshold,
+        model_name=model_name,
     )
+    data["model_filename"] = Path(model_name).name
     _log_inference_to_clearml(
         endpoint="/predict_from_saved",
         filename=filename,
@@ -298,7 +315,9 @@ async def predict_from_saved(
 
 @app.post("/predict_from_saved_annotated")
 async def predict_from_saved_annotated(
-    filename: str, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    filename: str,
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    model_name: str = DEFAULT_MODEL_NAME,
 ) -> JSONResponse:
     """
     Igual que /predict_from_saved, pero además genera y guarda una imagen
@@ -329,11 +348,13 @@ async def predict_from_saved_annotated(
         img,
         save_annotated_path=annotated_path,
         confidence_threshold=confidence_threshold,
+        model_name=model_name,
     )
     data.update(
         {
             "annotated_filename": annotated_filename,
             "annotated_relative_path": f"images_annotated/{annotated_filename}",
+            "model_filename": Path(model_name).name,
         }
     )
     _log_inference_to_clearml(
@@ -352,6 +373,7 @@ async def predict_from_saved_annotated(
 async def predict_all_saved(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     limit: int | None = None,
+    model_name: str = DEFAULT_MODEL_NAME,
 ) -> JSONResponse:
     """
     Recorre todas las imágenes guardadas en IMAGES_DIR y ejecuta YOLO sobre cada una.
@@ -414,11 +436,13 @@ async def predict_all_saved(
             img,
             save_annotated_path=annotated_path,
             confidence_threshold=confidence_threshold,
+            model_name=model_name,
         )
         data.update(
             {
                 "annotated_filename": annotated_filename,
                 "annotated_relative_path": f"images_annotated/{annotated_filename}",
+                "model_filename": Path(model_name).name,
             }
         )
 

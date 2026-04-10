@@ -20,7 +20,7 @@ Flujo de trabajo:
 
 
 st.set_page_config(page_title=" PROYECTO REALFORM - Cámara con YOLO", layout="wide")
-st.title(" REALFORM - 🥤 Deteccion de Tapones o Vasos 🍾 ")
+st.title(" REALFORM - Servicio de Deteccion de Imagenes con YOLOv8")
 #st.subheader("☢️ Realizado por Braian, supervisado por Ismael ☢️")
 st.subheader("==========================================================================================================")
 
@@ -38,6 +38,20 @@ predict_base_url = st.sidebar.text_input(
     value="http://localhost:8002",
     help="Normalmente http://localhost:8002",
 )
+
+# Descubrir modelos .pt disponibles en el proyecto
+available_models = sorted([p.name for p in Path(".").glob("*.pt")])
+if not available_models:
+    available_models = ["best.pt"]
+default_model_index = (
+    available_models.index("best.pt") if "best.pt" in available_models else 0
+)
+model_name = st.sidebar.selectbox(
+    "Modelo para inferencia (.pt)",
+    options=available_models,
+    index=default_model_index,
+    help="Selecciona el archivo .pt que quieres usar para inferenciar.",
+)
 model_info_url = f"{predict_base_url.rstrip('/')}/model_info"
 
 capture_url = f"{capture_base_url.rstrip('/')}/capture"
@@ -48,22 +62,24 @@ predict_from_saved_annotated_url = (
 predict_all_saved_url = f"{predict_base_url.rstrip('/')}/predict_all_saved"
 
 st.sidebar.markdown("---")
-if st.sidebar.button("Consultar modelo de inferencia"):
-    try:
-        model_resp = requests.get(model_info_url, timeout=10)
-    except Exception as e:
-        st.sidebar.error(f"No se pudo consultar /model_info: {e}")
+try:
+    model_resp = requests.get(
+        model_info_url,
+        params={"model_name": model_name},
+        timeout=10,
+    )
+except Exception as e:
+    st.sidebar.error(f"No se pudo consultar /model_info: {e}")
+else:
+    if model_resp.status_code != 200:
+        st.sidebar.error(
+            f"Error al consultar modelo (status {model_resp.status_code}): {model_resp.text}"
+        )
     else:
-        if model_resp.status_code != 200:
-            st.sidebar.error(
-                f"Error al consultar modelo (status {model_resp.status_code}): {model_resp.text}"
-            )
-        else:
-            model_data = model_resp.json()
-            st.sidebar.success(
-                f"Modelo activo: {model_data.get('model_filename', 'desconocido')}"
-            )
-            st.sidebar.json(model_data)
+        model_data = model_resp.json()
+        st.sidebar.success(
+            f"Modelo inferenciado: {model_data.get('model_filename', 'desconocido')}"
+        )
 
 # Selector de confianza mínima para YOLO
 st.sidebar.markdown("---")
@@ -145,6 +161,7 @@ with col_right:
             payload = {
                 "filename": st.session_state["last_filename"],
                 "confidence_threshold": confidence_threshold,
+                "model_name": model_name,
             }
             try:
                 resp = requests.post(
@@ -194,7 +211,11 @@ with col_right:
         try:
             resp = requests.get(
                 predict_all_saved_url,
-                params={"confidence_threshold": confidence_threshold, "limit": 30},
+                params={
+                    "confidence_threshold": confidence_threshold,
+                    "limit": 30,
+                    "model_name": model_name,
+                },
                 timeout=300,
             )
         except Exception as e:
