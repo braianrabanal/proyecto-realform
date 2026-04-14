@@ -1,9 +1,10 @@
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 import cv2
 from pathlib import Path
 from datetime import datetime
 import threading
+import time
 
 """
 Aplicación FastAPI para:
@@ -27,19 +28,26 @@ def capture_frames():
     Captura frames de la cámara en tiempo real (thread background)
     """
     global current_frame
-    cap = cv2.VideoCapture(0)
+    # Usar DirectShow en Windows para evitar bloqueos comunes con OpenCV
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     
     if not cap.isOpened():
         print("Error: No se pudo abrir la cámara")
         return
     
+    # Ajustar resolución para reducir carga
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     while True:
         ret, frame = cap.read()
         if ret:
             with frame_lock:
                 current_frame = frame
         else:
-            break
+            # Si falla la lectura, esperar un poco antes de reintentar
+            time.sleep(0.01)
+            continue
     
     cap.release()
 
@@ -53,6 +61,7 @@ def video_stream():
             if current_frame is not None:
                 frame = current_frame.copy()
             else:
+                time.sleep(0.01)
                 continue
         
         # Comprimir frame a JPEG
@@ -87,5 +96,22 @@ async def video():
         video_stream(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
+
+
+@app.get("/capture_image")
+async def capture_image():
+    """
+    Devuelve una única imagen JPEG capturada del frame actual.
+    """
+    with frame_lock:
+        if current_frame is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Frame no disponible aún"},
+            )
+        frame = current_frame.copy()
+
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return Response(content=buffer.tobytes(), media_type="image/jpeg")
 
 

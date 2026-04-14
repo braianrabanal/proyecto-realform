@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from ultralytics import YOLO
 from pathlib import Path
 from typing import Optional, List
@@ -205,7 +205,6 @@ def _run_inference_on_image(
         "detections": detections,
     }
 
-    # Si se solicita, generar y guardar una imagen anotada con los bounding boxes
     if save_annotated_path is not None:
         annotated_img = img.copy()
         for det in detections:
@@ -214,7 +213,6 @@ def _run_inference_on_image(
             class_name = det["class_name"]
             conf = det["confidence"]
 
-            # Dibujar rectángulo
             cv2.rectangle(
                 annotated_img,
                 (x1_i, y1_i),
@@ -223,7 +221,6 @@ def _run_inference_on_image(
                 2,
             )
 
-            # Dibujar etiqueta con clase y confianza
             label = f"{class_name} {conf:.2f}"
             cv2.putText(
                 annotated_img,
@@ -237,8 +234,67 @@ def _run_inference_on_image(
             )
 
         cv2.imwrite(str(save_annotated_path), annotated_img)
+        result["annotated_img"] = annotated_img
 
     return result
+
+
+def _annotate_image(img, detections):
+    annotated_img = img.copy()
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        x1_i, y1_i, x2_i, y2_i = map(int, [x1, y1, x2, y2])
+        class_name = det["class_name"]
+        conf = det["confidence"]
+
+        cv2.rectangle(
+            annotated_img,
+            (x1_i, y1_i),
+            (x2_i, y2_i),
+            (0, 255, 0),
+            2,
+        )
+
+        label = f"{class_name} {conf:.2f}"
+        cv2.putText(
+            annotated_img,
+            label,
+            (x1_i, max(y1_i - 10, 0)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return annotated_img
+
+
+@app.post("/predict_upload")
+async def predict_upload(
+    file: UploadFile = File(...),
+    confidence_threshold: float = 0.25,
+) -> Response:
+    """
+    Recibe una imagen por upload y devuelve la imagen anotada en JPEG.
+    """
+    contents = await file.read()
+    img = cv2.imdecode(np.frombuffer(contents, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    if img is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No se pudo leer la imagen enviada"},
+        )
+
+    data = _run_inference_on_image(
+        img,
+        confidence_threshold=confidence_threshold,
+    )
+    annotated_img = _annotate_image(img, data["detections"])
+
+    _, buffer = cv2.imencode('.jpg', annotated_img, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    return Response(content=buffer.tobytes(), media_type="image/jpeg")
 
 
 @app.post("/predict_from_saved")

@@ -1,5 +1,6 @@
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 """
 Aplicación Streamlit para visualizar:
@@ -32,6 +33,8 @@ predict_base_url = st.sidebar.text_input(
 # URLs de los endpoints de video
 capture_video_url = f"{capture_base_url.rstrip('/')}/video"
 predict_video_url = f"{predict_base_url.rstrip('/')}/video"
+capture_image_url = f"{capture_base_url.rstrip('/')}/capture_image"
+predict_upload_url = f"{predict_base_url.rstrip('/')}/predict_upload"
 
 # URLs de los endpoints de health check
 capture_health_url = f"{capture_base_url.rstrip('/')}/health"
@@ -110,27 +113,120 @@ except:
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎛️ Controles")
 
-# Control para iniciar/detener visualización
-show_stream = st.sidebar.checkbox("Mostrar streams en directo", value=True)
+# Selector principal de modo
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = None
+    st.session_state.captured_image = None
+    st.session_state.annotated_image = None
+    st.session_state.capture_error = None
 
-if show_stream:
-    # --- Mostrar dos streams lado a lado ---
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📹 Captura en Vivo")
-        st.write("Imagen sin procesar desde la cámara")
-        st.image(capture_video_url, use_column_width=True)
-    
-    with col2:
-        st.subheader("🤖 Predicción en Vivo (YOLO)")
-        st.write("Imagen con detecciones YOLO en tiempo real")
-        st.image(predict_video_url, use_column_width=True)
+st.markdown("## Selecciona el modo de uso")
+modo_col1, modo_col2 = st.columns(2)
+with modo_col1:
+    if st.button("TIEMPO REAL", key="mode_realtime"):
+        st.session_state.app_mode = "TIEMPO REAL"
+with modo_col2:
+    if st.button("CAPTURA", key="mode_capture"):
+        st.session_state.app_mode = "CAPTURA"
+
+if st.session_state.app_mode is None:
+    st.info("Elige un modo para comenzar: TIEMPO REAL o CAPTURA.")
 else:
-    st.info("📴 Streams desactivados. Activa la casilla para visualizar.")
+    if st.button("← Cambiar modo"):
+        st.session_state.app_mode = None
+        st.session_state.captured_image = None
+        st.session_state.annotated_image = None
+        st.session_state.capture_error = None
+    st.markdown(f"### Modo seleccionado: **{st.session_state.app_mode}**")
 
-# --- Información de ayuda ---
-st.markdown("---")
+    if st.session_state.app_mode == "TIEMPO REAL":
+        show_stream = st.sidebar.checkbox("Mostrar stream en directo", value=True)
+
+        if show_stream:
+            # --- Mostrar dos streams lado a lado ---
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("📹 Captura en Vivo")
+                st.write("Imagen sin procesar desde la cámara")
+                components.html(
+                    f"""
+                    <div style="width:100%; max-height:520px; overflow:hidden;">
+                      <img
+                        src="{capture_video_url}"
+                        style="width:100%; height:520px; object-fit:contain; border:1px solid #ddd;"
+                        alt="Captura en vivo"
+                      />
+                    </div>
+                    """,
+                    height=540,
+                )
+            
+            with col2:
+                st.subheader("🤖 Predicción en Vivo (YOLO)")
+                st.write("Imagen con detecciones YOLO en tiempo real")
+                components.html(
+                    f"""
+                    <div style="width:100%; max-height:520px; overflow:hidden;">
+                      <img
+                        src="{predict_video_url}"
+                        style="width:100%; height:520px; object-fit:contain; border:1px solid #ddd;"
+                        alt="Predicción en vivo"
+                      />
+                    </div>
+                    """,
+                    height=540,
+                )
+        else:
+            st.info("📴 Streams desactivados. Activa la casilla para visualizar.")
+    else:
+        st.subheader("📸 Captura y análisis bajo demanda")
+        st.write("Pulsa el botón para tomar una fotografía y enviarla al servicio de inferencia.")
+
+        if st.button("Capturar imagen"):
+            try:
+                resp = requests.get(capture_image_url, timeout=5)
+                if resp.status_code == 200:
+                    st.session_state.captured_image = resp.content
+                    st.session_state.capture_error = None
+
+                    predict_resp = requests.post(
+                        predict_upload_url,
+                        files={"file": ("captura.jpg", resp.content, "image/jpeg")},
+                        timeout=20,
+                    )
+
+                    if predict_resp.status_code == 200:
+                        st.session_state.annotated_image = predict_resp.content
+                    else:
+                        st.session_state.annotated_image = None
+                        st.session_state.capture_error = (
+                            f"Error de predicción: {predict_resp.status_code} - {predict_resp.text}"
+                        )
+                else:
+                    st.session_state.capture_error = (
+                        f"Error al capturar imagen: {resp.status_code} - {resp.text}"
+                    )
+            except Exception as e:
+                st.session_state.capture_error = str(e)
+
+        if st.session_state.capture_error:
+            st.error(st.session_state.capture_error)
+
+        if st.session_state.captured_image is not None:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(
+                    st.session_state.captured_image,
+                    caption="Imagen capturada",
+                    use_column_width=True,
+                )
+            with col2:
+                st.image(
+                    st.session_state.annotated_image or st.session_state.captured_image,
+                    caption="Resultado de la inferencia",
+                    use_column_width=True,
+                )
 st.markdown("""
 ### 📋 Instrucciones de Uso
 
