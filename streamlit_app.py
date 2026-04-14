@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🥤 REALFORM - Detección de Tapones o Vasos 🍾")
+st.title("PROYECTO REALFORM")
 st.subheader("Visualización en Tiempo Real con YOLO")
 
 # --- Configuración de APIs en sidebar ---
