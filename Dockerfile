@@ -19,8 +19,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Instalar dependencias de Python para entrenamiento, inferencia y API
 RUN pip install --upgrade pip && pip install \
     ultralytics \
+    clearml \
     fastapi \
     "uvicorn[standard]" \
+    streamlit \
+    requests \
+    pillow \
     opencv-python-headless \
     numpy \
     pydantic \
