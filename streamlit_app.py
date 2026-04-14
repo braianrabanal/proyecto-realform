@@ -1,173 +1,165 @@
-import os
-import io
-from pathlib import Path
-
 import requests
-from PIL import Image
 import streamlit as st
 
-
+"""
+Aplicación Streamlit para visualizar:
+- Stream de video en tiempo real desde la cámara (sin procesar)
+- Stream de video con predicciones YOLO en tiempo real (con bounding boxes)
 """
 
-Flujo de trabajo:
+st.set_page_config(
+    page_title="PROYECTO REALFORM - Detección en Tiempo Real",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-- Botón "Capturar imagen"
-- Muestra la última imagen capturada
-- Botón "Predecir última imagen" → Analiza la imagen y muestra las predicciones
-- Botón "Predecir todas las imágenes guardadas" → En la carpeta images, analiza todas las imagenes y muestra las predicciones en annotated_images.
+st.title("🥤 REALFORM - Detección de Tapones o Vasos 🍾")
+st.subheader("Visualización en Tiempo Real con YOLO")
 
-"""
-
-
-st.set_page_config(page_title=" PROYECTO REALFORM - Cámara con YOLO", layout="wide")
-st.title(" REALFORM - 🥤 Deteccion de Tapones o Vasos 🍾 ")
-#st.subheader("☢️ Realizado por Braian, supervisado por Ismael ☢️")
-st.subheader("==========================================================================================================")
-
-
-# --- Configuración de endpoints ---
-
-st.sidebar.header("Configuración de APIs")
+# --- Configuración de APIs en sidebar ---
+st.sidebar.header("⚙️ Configuración de APIs")
 capture_base_url = st.sidebar.text_input(
-    "URL servicio captura: \n\n (default: http://localhost:8001)",
+    "URL servicio captura:",
     value="http://localhost:8001",
     help="Normalmente http://localhost:8001",
 )
 predict_base_url = st.sidebar.text_input(
-    "URL servicio predicción: \n\n (default: http://localhost:8002)",
+    "URL servicio predicción:",
     value="http://localhost:8002",
     help="Normalmente http://localhost:8002",
 )
 
-capture_url = f"{capture_base_url.rstrip('/')}/capture"
-predict_from_saved_url = f"{predict_base_url.rstrip('/')}/predict_from_saved"
-predict_from_saved_annotated_url = (
-    f"{predict_base_url.rstrip('/')}/predict_from_saved_annotated"
-)
-predict_all_saved_url = f"{predict_base_url.rstrip('/')}/predict_all_saved"
+# URLs de los endpoints de video
+capture_video_url = f"{capture_base_url.rstrip('/')}/video"
+predict_video_url = f"{predict_base_url.rstrip('/')}/video"
 
-# Carpeta de imágenes en el host (montada por docker-compose)
-HOST_IMAGES_DIR = Path("images")
-HOST_ANNOTATED_DIR = Path("images_annotated")
+# URLs de los endpoints de health check
+capture_health_url = f"{capture_base_url.rstrip('/')}/health"
+predict_health_url = f"{predict_base_url.rstrip('/')}/health"
 
+# --- Verificar conexión con servicios ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📡 Estado de Servicios")
 
-if "last_filename" not in st.session_state:
-    st.session_state["last_filename"] = None
-
-
-col_left, col_right = st.columns(2)
-
-
-# --- Columna izquierda: captura y visualización de imagen ---
-
-with col_left:
-    st.subheader("1. Captura de imagen desde la cámara")
-
-    if st.button("📸 Capturar imagen desde cámara"):
-        try:
-            resp = requests.post(capture_url, timeout=10)
-        except Exception as e:
-            st.error(f"No se pudo contactar con el servicio de captura: {e}")
-        else:
-            if resp.status_code != 200:
-                st.error(
-                    f"Error al capturar imagen (status {resp.status_code}):\n{resp.text}"
-                )
-            else:
-                data = resp.json()
-                filename = data.get("filename")
-                st.session_state["last_filename"] = filename
-
-                st.success(f"Imagen capturada y guardada como: {filename}")
-                st.json(data)
-
-    st.markdown("---")
-    st.subheader("2. Última imagen capturada")
-
-    last_filename = st.session_state.get("last_filename")
-    if last_filename:
-        st.write(f"Último archivo: `{last_filename}`")
-        img_path = HOST_IMAGES_DIR / last_filename
-        if img_path.exists():
-            try:
-                image = Image.open(img_path)
-                st.image(image, caption=last_filename, use_column_width=True)
-            except Exception as e:
-                st.warning(f"No se pudo abrir la imagen {img_path}: {e}")
-        else:
-            st.warning(
-                f"No se encontró la imagen en el host en {img_path}. "
-                "Asegúrate de que docker-compose monta ./images correctamente."
-            )
+# Verificar captura
+try:
+    resp = requests.get(capture_health_url, timeout=2)
+    if resp.status_code == 200:
+        st.sidebar.success("✅ Servicio de Captura: OK")
     else:
-        st.info("Aún no has capturado ninguna imagen en esta sesión.")
+        st.sidebar.error("❌ Servicio de Captura: Error")
+except:
+    st.sidebar.error("❌ Servicio de Captura: No disponible")
 
+# Verificar predicción
+try:
+    resp = requests.get(predict_health_url, timeout=2)
+    if resp.status_code == 200:
+        st.sidebar.success("✅ Servicio de Predicción: OK")
+    else:
+        st.sidebar.error("❌ Servicio de Predicción: Error")
+except:
+    st.sidebar.error("❌ Servicio de Predicción: No disponible")
 
-# --- Columna derecha: predicciones YOLO ---
+# --- Seleccionar modelo YOLO ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🤖 Seleccionar Modelo YOLO")
 
-with col_right:
-    st.subheader("3. Predicción YOLO + imagen anotada de la última captura")
+models_url = f"{predict_base_url.rstrip('/')}/models"
+select_model_url = f"{predict_base_url.rstrip('/')}/select_model"
 
-    if st.button("🖼️ Predecir y guardar imagen anotada"):
-        if not st.session_state.get("last_filename"):
-            st.warning("Primero captura una imagen para tener un filename.")
-        else:
-            payload = {"filename": st.session_state["last_filename"]}
-            try:
-                resp = requests.post(
-                    predict_from_saved_annotated_url, params=payload, timeout=30
-                )
-            except Exception as e:
-                st.error(f"No se pudo contactar con el servicio de predicción: {e}")
-            else:
-                if resp.status_code != 200:
-                    st.error(
-                        f"Error al hacer la predicción anotada (status {resp.status_code}):\n{resp.text}"
-                    )
-                else:
-                    data = resp.json()
-                    st.success(
-                        f"Predicción anotada completada para {st.session_state['last_filename']}"
-                    )
-                    st.json(data)
-
-                    annotated_filename = data.get("annotated_filename")
-                    if annotated_filename:
-                        annotated_path = HOST_ANNOTATED_DIR / annotated_filename
-                        if annotated_path.exists():
-                            try:
-                                annotated_image = Image.open(annotated_path)
-                                st.image(
-                                    annotated_image,
-                                    caption=f"Imagen anotada: {annotated_filename}",
-                                    use_column_width=True,
-                                )
-                            except Exception as e:
-                                st.warning(
-                                    f"No se pudo abrir la imagen anotada {annotated_path}: {e}"
-                                )
+try:
+    # Obtener lista de modelos disponibles
+    resp = requests.get(models_url, timeout=2)
+    if resp.status_code == 200:
+        data = resp.json()
+        available_models = data.get("available_models", [])
+        current_model = data.get("current_model", "")
+        
+        if available_models:
+            selected_model = st.sidebar.selectbox(
+                "Elige un modelo:",
+                available_models,
+                index=available_models.index(current_model) if current_model in available_models else 0,
+                help="Selecciona un modelo .pt para usar en las predicciones"
+            )
+            
+            # Si cambió el modelo, solicitar al servidor que lo cargue
+            if selected_model != current_model:
+                with st.sidebar.spinner(f"Cargando módelo {selected_model}..."):
+                    try:
+                        change_resp = requests.post(
+                            f"{select_model_url}?model_filename={selected_model}",
+                            timeout=5
+                        )
+                        if change_resp.status_code == 200:
+                            st.sidebar.success(f"✅ Modelo cambiado a: {selected_model}")
                         else:
-                            st.warning(
-                                f"No se encontró la imagen anotada en {annotated_path}. "
-                                "Asegúrate de que el volumen ./images_annotated está disponible en el host."
-                            )
-
-    st.markdown("---")
-    st.subheader("4. Predicción YOLO sobre TODAS las imágenes guardadas")
-
-    if st.button("📂 Predecir todas las imágenes de la carpeta images\n\n 🗃️ Se guardan en images_annotated"):
-        try:
-            resp = requests.get(predict_all_saved_url, timeout=60)
-        except Exception as e:
-            st.error(f"No se pudo contactar con el servicio de predicción: {e}")
-        else:
-            if resp.status_code != 200:
-                st.error(
-                    f"Error al hacer la predicción masiva (status {resp.status_code}):\n{resp.text}"
-                )
+                            st.sidebar.error(f"❌ Error al cambiar modelo: {change_resp.text}")
+                    except Exception as e:
+                        st.sidebar.error(f"❌ Error: {str(e)}")
             else:
-                st.success("Predicciones completadas para todas las imágenes encontradas.")
-                results = resp.json()
-                st.json(results)
+                st.sidebar.info(f"📌 Modelo activo: {current_model}")
+        else:
+            st.sidebar.warning("⚠️ No hay modelos .pt encontrados en la carpeta principal")
+    else:
+        st.sidebar.error("❌ Error al obtener lista de modelos")
+except:
+    st.sidebar.error("❌ No se puede conectar con el servicio de predicción")
 
- 
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎛️ Controles")
+
+# Control para iniciar/detener visualización
+show_stream = st.sidebar.checkbox("Mostrar streams en directo", value=True)
+
+if show_stream:
+    # --- Mostrar dos streams lado a lado ---
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📹 Captura en Vivo")
+        st.write("Imagen sin procesar desde la cámara")
+        st.image(capture_video_url, use_column_width=True)
+    
+    with col2:
+        st.subheader("🤖 Predicción en Vivo (YOLO)")
+        st.write("Imagen con detecciones YOLO en tiempo real")
+        st.image(predict_video_url, use_column_width=True)
+else:
+    st.info("📴 Streams desactivados. Activa la casilla para visualizar.")
+
+# --- Información de ayuda ---
+st.markdown("---")
+st.markdown("""
+### 📋 Instrucciones de Uso
+
+1. **Asegúrate de que los dos servicios estén corriendo:**
+   ```bash
+   # Terminal 1: Servicio de Captura
+   uvicorn app.app_capture:app --host 0.0.0.0 --port 8001
+   
+   # Terminal 2: Servicio de Predicción
+   uvicorn app.app_predict:app --host 0.0.0.0 --port 8002
+   
+   # Terminal 3: Streamlit (esta aplicación)
+   streamlit run streamlit_app.py
+   ```
+
+2. **Verifica la conexión** en el panel lateral izquierdo
+
+3. **Visualiza los streams** - Los videos se actualizan automáticamente
+
+### ⚠️ Notas Importantes
+
+- **Cámara USB:** Asegúrate de tener una cámara USB conectada
+- **Puertos:** Los servicios deben estar en los puertos 8001 y 8002
+- **Modelo YOLO:** Coloca tu archivo `best.pt` en la carpeta raíz del proyecto
+- **Performance:** La inferencia YOLO puede consumir GPU si está disponible
+
+### 🔧 Solución de Problemas
+
+- **"No disponible":** Verifica que los servicios estén corriendo
+- **No hay imagen:** Verifica permisos de acceso a la cámara
+- **Lento:** Reduce la resolución de la cámara o aumenta la calidad JPEG
+""")
