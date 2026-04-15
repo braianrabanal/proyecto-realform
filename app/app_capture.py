@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 import cv2
+import sys
 from pathlib import Path
 from datetime import datetime
 import threading
@@ -28,8 +29,13 @@ def capture_frames():
     Captura frames de la cámara en tiempo real (thread background)
     """
     global current_frame
-    # Usar DirectShow en Windows para evitar bloqueos comunes con OpenCV
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
+    # Elegir backend de captura según el sistema operativo.
+    # cv2.CAP_DSHOW funciona en Windows, pero en Linux debe usarse el backend por defecto.
+    if sys.platform.startswith("win"):
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
         print("Error: No se pudo abrir la cámara")
