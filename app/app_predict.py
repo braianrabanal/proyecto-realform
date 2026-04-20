@@ -2,13 +2,15 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from ultralytics import YOLO
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 import cv2
 import numpy as np
 import requests
 import threading
+import os
 from queue import Queue
 import time
+from time import perf_counter
 
 """
 Aplicación FastAPI para:
@@ -56,6 +58,7 @@ IMAGES_DIR = Path("images")
 # Directorio donde se guardarán las imágenes anotadas (con bounding boxes)
 ANNOTATED_DIR = Path("images_annotated")
 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
+ANOMALIB_TEST_DIR = Path("images_anomalibtest")
 
 
 def get_model() -> YOLO:
@@ -448,6 +451,240 @@ async def predict_all_saved(confidence_threshold: float = 0.25) -> JSONResponse:
         results_by_file[img_path.name] = data
 
     return JSONResponse(results_by_file)
+
+
+def _to_python_scalar(value: Any) -> Any:
+    """Convierte tensores/escalars numpy a tipos serializables de Python."""
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
+
+
+def _get_prediction_value(prediction: Any, key: str) -> Any:
+    """Obtiene un campo desde dict o desde atributos de objetos de Anomalib."""
+    if isinstance(prediction, dict):
+        return prediction.get(key)
+    return getattr(prediction, key, None)
+
+
+def _build_anomalib_annotation(
+    image_bgr: np.ndarray,
+    prediction: Any,
+    score_threshold: float,
+) -> tuple[np.ndarray, float | None, int | None, bool]:
+    """
+    Construye imagen anotada para salida de Anomalib.
+    Si existe anomaly_map, se superpone como heatmap.
+    """
+    annotated = image_bgr.copy()
+
+    score_raw = _get_prediction_value(prediction, "pred_score")
+    if score_raw is None:
+        score_raw = _get_prediction_value(prediction, "score")
+    label_raw = _get_prediction_value(prediction, "pred_label")
+    if label_raw is None:
+        label_raw = _get_prediction_value(prediction, "label")
+    anomaly_map = _get_prediction_value(prediction, "anomaly_map")
+
+    score = _to_python_scalar(score_raw)
+    label = _to_python_scalar(label_raw)
+
+    if isinstance(score, (list, tuple)) and score:
+        score = score[0]
+    if isinstance(label, (list, tuple)) and label:
+        label = label[0]
+    if hasattr(score, "shape") and getattr(score, "shape", None) not in [(), None]:
+        try:
+            score = score[0]
+        except Exception:
+            pass
+    if hasattr(label, "shape") and getattr(label, "shape", None) not in [(), None]:
+        try:
+            label = label[0]
+        except Exception:
+            pass
+
+    score = _to_python_scalar(score)
+    label = _to_python_scalar(label)
+
+    try:
+        score = float(score) if score is not None else None
+    except Exception:
+        score = None
+    try:
+        label = int(label) if label is not None else None
+    except Exception:
+        label = None
+
+    if anomaly_map is not None:
+        if hasattr(anomaly_map, "detach"):
+            anomaly_map = anomaly_map.detach().cpu().numpy()
+        anomaly_map = np.squeeze(np.asarray(anomaly_map))
+        if anomaly_map.ndim == 2 and anomaly_map.size > 0:
+            normalized = cv2.normalize(anomaly_map, None, 0, 255, cv2.NORM_MINMAX)
+            heat = normalized.astype(np.uint8)
+            heat = cv2.resize(heat, (annotated.shape[1], annotated.shape[0]))
+            heat = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
+            annotated = cv2.addWeighted(annotated, 0.7, heat, 0.3, 0)
+
+    # Decisión efectiva:
+    # - Si hay score, manda el threshold.
+    # - Si no hay score, usar la etiqueta cruda del modelo.
+    if score is not None:
+        is_anomalous = score >= score_threshold
+    else:
+        is_anomalous = label == 1
+
+    label_text = "ANOMALIA" if is_anomalous else "NORMAL"
+    score_text = f"{score:.4f}" if score is not None else "N/A"
+    cv2.putText(
+        annotated,
+        f"{label_text} | score={score_text} | thr={score_threshold:.3f}",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0) if not is_anomalous else (0, 0, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return annotated, score, label, is_anomalous
+
+
+@app.get("/predict_anomalib_folder")
+async def predict_anomalib_folder(
+    model_filename: str,
+    image_dir: str = "images_anomalibtest",
+    score_threshold: float = 0.5,
+) -> JSONResponse:
+    """
+    Ejecuta inferencia Anomalib sobre todas las imágenes de una carpeta y
+    guarda imágenes inferenciadas en images_annotated.
+    """
+    try:
+        # Necesario para checkpoints de Anomalib/PyTorch que incluyen objetos pickled.
+        os.environ.setdefault("TRUST_REMOTE_CODE", "1")
+        from anomalib.deploy import TorchInferencer  # type: ignore
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Anomalib no está instalado o no se pudo importar TorchInferencer",
+                "detail": str(e),
+            },
+        )
+
+    model_path = MODELS_DIR / Path(model_filename).name
+    if not model_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Modelo Anomalib no encontrado: {model_path.name}"},
+        )
+    if model_path.suffix.lower() != ".pt":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "El modelo Anomalib debe ser un archivo .pt"},
+        )
+
+    source_dir = Path(image_dir)
+    if not source_dir.is_absolute():
+        source_dir = Path(source_dir)
+    if not source_dir.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Directorio no encontrado: {source_dir}"},
+        )
+
+    image_paths: List[Path] = []
+    for pattern in ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"):
+        image_paths.extend(source_dir.glob(pattern))
+    image_paths = sorted(image_paths)
+    if not image_paths:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"No se encontraron imágenes en {source_dir}"},
+        )
+
+    try:
+        inferencer = TorchInferencer(path=str(model_path), device="cpu")
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "No se pudo cargar el modelo con Anomalib",
+                "detail": str(e),
+            },
+        )
+
+    results = {}
+    defect_count = 0
+    total_inference_time_ms = 0.0
+    total_pipeline_start = perf_counter()
+    for img_path in image_paths:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            results[img_path.name] = {"error": "No se pudo leer la imagen"}
+            continue
+
+        try:
+            infer_start = perf_counter()
+            pred = inferencer.predict(image=img)
+            infer_elapsed_ms = (perf_counter() - infer_start) * 1000.0
+            total_inference_time_ms += infer_elapsed_ms
+        except Exception as e:
+            results[img_path.name] = {"error": f"Fallo de inferencia: {e}"}
+            continue
+
+        annotated_img, score, label, is_anomalous = _build_anomalib_annotation(
+            img,
+            pred,
+            score_threshold=score_threshold,
+        )
+
+        save_name = f"annotated_anomalib_{img_path.name}"
+        save_path = ANNOTATED_DIR / save_name
+        cv2.imwrite(str(save_path), annotated_img)
+
+        if is_anomalous:
+            defect_count += 1
+
+        effective_label = 1 if is_anomalous else 0
+
+        results[img_path.name] = {
+            "pred_label": label,
+            "pred_score": score,
+            "score_threshold_used": score_threshold,
+            "effective_label": effective_label,
+            "is_anomalous": is_anomalous,
+            "inference_time_ms": round(infer_elapsed_ms, 3),
+            "annotated_filename": save_name,
+            "annotated_relative_path": f"images_annotated/{save_name}",
+        }
+
+    processed_count = len(image_paths)
+    normal_count = processed_count - defect_count
+    total_pipeline_time_ms = (perf_counter() - total_pipeline_start) * 1000.0
+    avg_inference_time_ms = (
+        total_inference_time_ms / processed_count if processed_count > 0 else 0.0
+    )
+
+    return JSONResponse(
+        {
+            "model_filename": model_path.name,
+            "source_dir": str(source_dir),
+            "processed_images": processed_count,
+            "defect_count": defect_count,
+            "normal_count": normal_count,
+            "timing": {
+                "total_inference_time_ms": round(total_inference_time_ms, 3),
+                "avg_inference_time_ms": round(avg_inference_time_ms, 3),
+                "total_pipeline_time_ms": round(total_pipeline_time_ms, 3),
+            },
+            "results": results,
+        }
+    )
 
 
 def process_video_stream(

@@ -48,6 +48,7 @@ services:
       - ./images_annotated:/app/data/images_annotated
     environment:
       - PYTHONPATH=/app
+      - TRUST_REMOTE_CODE=${TRUST_REMOTE_CODE:-1}
       - ENABLE_CLEARML=${ENABLE_CLEARML:-false}
       - CLEARML_PROJECT=${CLEARML_PROJECT:-REALFORM}
       - CLEARML_TASK_NAME=${CLEARML_TASK_NAME:-predict-service}

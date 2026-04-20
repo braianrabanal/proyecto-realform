@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Instalar dependencias de Python para entrenamiento, inferencia y API
 RUN pip install --upgrade pip && pip install \
     ultralytics \
+    anomalib \
     clearml \
     fastapi \
     "uvicorn[standard]" \
