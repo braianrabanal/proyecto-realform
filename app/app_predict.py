@@ -26,7 +26,25 @@ frame_lock = threading.Lock()
 # --- Configuración y carga perezosa del modelo YOLO ---
 
 MODELS_DIR = Path(".")  # Carpeta principal donde buscar modelos .pt
-MODEL_PATH = Path("best.pt")  # Modelo por defecto
+
+
+def _resolve_default_model_path() -> Path:
+    """
+    Elige modelo por defecto:
+    1) best.pt si existe
+    2) primer .pt disponible en la carpeta principal
+    3) best.pt como fallback nominal
+    """
+    best = MODELS_DIR / "best.pt"
+    if best.exists():
+        return best
+    pt_models = sorted(MODELS_DIR.glob("*.pt"))
+    if pt_models:
+        return pt_models[0]
+    return best
+
+
+MODEL_PATH = _resolve_default_model_path()
 _yolo_model: Optional[YOLO] = None
 _model_lock = threading.Lock()  # Lock para cambiar modelo de forma segura
 
@@ -234,7 +252,6 @@ def _run_inference_on_image(
             )
 
         cv2.imwrite(str(save_annotated_path), annotated_img)
-        result["annotated_img"] = annotated_img
 
     return result
 

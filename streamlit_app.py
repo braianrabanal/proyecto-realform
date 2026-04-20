@@ -35,6 +35,7 @@ capture_video_url = f"{capture_base_url.rstrip('/')}/video"
 predict_video_url = f"{predict_base_url.rstrip('/')}/video"
 capture_image_url = f"{capture_base_url.rstrip('/')}/capture_image"
 predict_upload_url = f"{predict_base_url.rstrip('/')}/predict_upload"
+predict_all_saved_url = f"{predict_base_url.rstrip('/')}/predict_all_saved"
 
 # URLs de los endpoints de health check
 capture_health_url = f"{capture_base_url.rstrip('/')}/health"
@@ -209,6 +210,38 @@ else:
                     )
             except Exception as e:
                 st.session_state.capture_error = str(e)
+
+        st.markdown("---")
+        st.subheader("🗂️ Inferencia masiva desde /images")
+        st.write(
+            "Ejecuta inferencia sobre todas las imágenes de `/images` con el modelo activo "
+            "y guarda los resultados en `images_annotated`."
+        )
+        mass_timeout = st.number_input(
+            "Timeout inferencia masiva (segundos)",
+            min_value=30,
+            max_value=1800,
+            value=300,
+            step=30,
+        )
+        if st.button("Inferenciar carpeta /images y guardar anotadas"):
+            try:
+                mass_resp = requests.get(
+                    predict_all_saved_url,
+                    timeout=int(mass_timeout),
+                )
+                if mass_resp.status_code == 200:
+                    mass_data = mass_resp.json()
+                    st.success(
+                        f"Inferencia masiva completada. Archivos procesados: {len(mass_data)}"
+                    )
+                    st.json(mass_data)
+                else:
+                    st.error(
+                        f"Error en inferencia masiva: {mass_resp.status_code} - {mass_resp.text}"
+                    )
+            except Exception as e:
+                st.error(f"No se pudo ejecutar la inferencia masiva: {e}")
 
         if st.session_state.capture_error:
             st.error(st.session_state.capture_error)
